@@ -1,59 +1,89 @@
 // Package espn is the library behind the espn command line:
-// the HTTP client, request shaping, and the typed data models for espn.
+// the HTTP client, request shaping, and the typed data models for ESPN.
 //
-// The Client here is the spine every command shares. It sets a real
-// User-Agent, paces requests so a busy session stays polite, and retries the
-// transient failures (429 and 5xx) that any public site throws under load.
-// Build your endpoint calls and JSON decoding on top of it.
+// The Client talks to site.api.espn.com, ESPN's unofficial public API.
+// No API key is required. It sets a real User-Agent, paces requests to
+// stay polite, and retries transient failures (429 and 5xx).
 package espn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 )
 
-// DefaultUserAgent identifies the client to espn. A real, honest
-// User-Agent is both polite and the thing most likely to keep you unblocked.
-const DefaultUserAgent = "espn/dev (+https://github.com/tamnd/espn-cli)"
-
-// Host is the site this client talks to, and the host the URI driver in
-// domain.go claims. The scaffold points it at espn.com; change it once you
-// know the real endpoints you want to read.
-const Host = "espn.com"
+// Host is the ESPN API host this client talks to.
+const Host = "site.api.espn.com"
 
 // BaseURL is the root every request is built from.
 const BaseURL = "https://" + Host
 
-// Client talks to espn over HTTP.
+// DefaultUserAgent identifies this client to ESPN.
+const DefaultUserAgent = "espn-cli/0.1 (tamnd87@gmail.com)"
+
+// validLeagues maps league code to the sport segment used in the API path.
+var validLeagues = map[string]string{
+	"nfl":   "football",
+	"mlb":   "baseball",
+	"nba":   "basketball",
+	"nhl":   "hockey",
+	"eng.1": "soccer",
+}
+
+// sportForLeague returns the sport name for a given league code.
+// If the league is unknown it returns an empty string.
+func sportForLeague(league string) string {
+	return validLeagues[league]
+}
+
+// Config holds the client settings.
+type Config struct {
+	BaseURL   string
+	UserAgent string
+	Rate      time.Duration
+	Timeout   time.Duration
+	Retries   int
+}
+
+// DefaultConfig returns sensible defaults.
+func DefaultConfig() Config {
+	return Config{
+		BaseURL:   BaseURL,
+		Rate:      300 * time.Millisecond,
+		Timeout:   15 * time.Second,
+		Retries:   3,
+		UserAgent: DefaultUserAgent,
+	}
+}
+
+// Client talks to the ESPN API over HTTP.
 type Client struct {
 	HTTP      *http.Client
+	BaseURL   string
 	UserAgent string
-	// Rate is the minimum gap between requests. Zero means no pacing.
-	Rate    time.Duration
-	Retries int
+	Rate      time.Duration
+	Retries   int
 
 	last time.Time
 }
 
-// NewClient returns a Client with sensible defaults: a 30s timeout, a 200ms
-// minimum gap between requests, and five retries on transient errors.
+// NewClient returns a Client with DefaultConfig settings.
 func NewClient() *Client {
+	cfg := DefaultConfig()
 	return &Client{
-		HTTP:      &http.Client{Timeout: 30 * time.Second},
-		UserAgent: DefaultUserAgent,
-		Rate:      200 * time.Millisecond,
-		Retries:   5,
+		HTTP:      &http.Client{Timeout: cfg.Timeout},
+		BaseURL:   cfg.BaseURL,
+		UserAgent: cfg.UserAgent,
+		Rate:      cfg.Rate,
+		Retries:   cfg.Retries,
 	}
 }
 
-// Get fetches url and returns the response body. It paces and retries according
-// to the client's settings. The caller owns nothing extra; the body is read
-// fully and closed here.
+// Get fetches url and returns the response body. It paces and retries
+// according to the client settings. The body is read and closed here.
 func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.Retries; attempt++ {
@@ -123,78 +153,323 @@ func backoff(attempt int) time.Duration {
 	return d
 }
 
-// Page is the scaffold's one example record: a single page, addressed by the
-// path that names it on espn.com. It is a stand-in for the typed records you
-// will model from the real espn endpoints. The kit struct tags make it
-// addressable as a resource URI (see domain.go): ID is the URI id, and Body is
-// the long text `espn cat` and the Markdown export print.
-type Page struct {
-	ID    string `json:"id" kit:"id"`
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
-	Body  string `json:"body,omitempty" kit:"body"`
+// sportLeaguePath returns "sport/league" and validates the league.
+func (c *Client) sportLeaguePath(sport, league string) (string, error) {
+	if league == "" {
+		league = "nfl"
+	}
+	if sport == "" {
+		s, ok := validLeagues[league]
+		if !ok {
+			return "", fmt.Errorf("unknown league %q; valid: nfl, mlb, nba, nhl, eng.1", league)
+		}
+		sport = s
+	}
+	return sport + "/" + league, nil
 }
 
-// GetPage fetches one page by its path (for example "wiki/Go") and returns it as
-// a record. The scaffold keeps a plain-text preview of the response as the body;
-// replace the parsing with the real fields once you know the endpoint's shape.
-func (c *Client) GetPage(ctx context.Context, path string) (*Page, error) {
-	path = strings.Trim(path, "/")
-	url := BaseURL + "/" + path
+// --- Wire types (ESPN API response shapes) ---
+
+type teamsResp struct {
+	Sports []struct {
+		Leagues []struct {
+			Teams []struct {
+				Team struct {
+					ID              string `json:"id"`
+					UID             string `json:"uid"`
+					Slug            string `json:"slug"`
+					DisplayName     string `json:"displayName"`
+					Abbreviation    string `json:"abbreviation"`
+					Location        string `json:"location"`
+					Logos           []struct {
+						Href string `json:"href"`
+					} `json:"logos"`
+					Links []struct {
+						Href string `json:"href"`
+					} `json:"links"`
+				} `json:"team"`
+			} `json:"teams"`
+		} `json:"leagues"`
+	} `json:"sports"`
+}
+
+type scoreboardResp struct {
+	Events []struct {
+		ID        string `json:"id"`
+		UID       string `json:"uid"`
+		Date      string `json:"date"`
+		ShortName string `json:"shortName"`
+		Season    struct {
+			Year int `json:"year"`
+			Type int `json:"type"`
+		} `json:"season"`
+		Status struct {
+			Type struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Completed   bool   `json:"completed"`
+			} `json:"type"`
+		} `json:"status"`
+		Competitions []struct {
+			Competitors []struct {
+				ID       string `json:"id"`
+				HomeAway string `json:"homeAway"`
+				Score    string `json:"score"`
+				Team     struct {
+					DisplayName string `json:"displayName"`
+				} `json:"team"`
+			} `json:"competitors"`
+		} `json:"competitions"`
+	} `json:"events"`
+}
+
+type newsResp struct {
+	Articles []struct {
+		DataSourceIdentifier string `json:"dataSourceIdentifier"`
+		Headline             string `json:"headline"`
+		Description          string `json:"description"`
+		Byline               string `json:"byline"`
+		Type                 string `json:"type"`
+		Premium              bool   `json:"premium"`
+		PublishedDate        string `json:"publishedDate"`
+		Images               []struct {
+			URL string `json:"url"`
+		} `json:"images"`
+		Links struct {
+			Web struct {
+				Href string `json:"href"`
+			} `json:"web"`
+		} `json:"links"`
+	} `json:"articles"`
+}
+
+type standingsResp struct {
+	Children []struct {
+		Name    string `json:"name"`
+		Entries []struct {
+			Team struct {
+				DisplayName string `json:"displayName"`
+			} `json:"team"`
+			Stats []struct {
+				Name        string `json:"name"`
+				DisplayName string `json:"displayName"`
+				Value       float64 `json:"value"`
+				DisplayValue string `json:"displayValue"`
+			} `json:"stats"`
+		} `json:"entries"`
+	} `json:"children"`
+}
+
+// --- Public record types ---
+
+// Team is one team entry.
+type Team struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Abbreviation string `json:"abbreviation"`
+	Location     string `json:"location"`
+	Slug         string `json:"slug"`
+	LogoURL      string `json:"logo_url,omitempty"`
+	WebURL       string `json:"web_url,omitempty"`
+}
+
+// Game is one scoreboard entry.
+type Game struct {
+	ID        string `json:"id"`
+	Date      string `json:"date"`
+	ShortName string `json:"short_name"`
+	HomeTeam  string `json:"home_team"`
+	HomeScore string `json:"home_score"`
+	AwayTeam  string `json:"away_team"`
+	AwayScore string `json:"away_score"`
+	Status    string `json:"status"`
+	Season    int    `json:"season"`
+}
+
+// Article is one news article.
+type Article struct {
+	Headline      string `json:"headline"`
+	Description   string `json:"description"`
+	Byline        string `json:"byline,omitempty"`
+	PublishedDate string `json:"published_date"`
+	Premium       bool   `json:"premium"`
+	WebURL        string `json:"web_url,omitempty"`
+	ImageURL      string `json:"image_url,omitempty"`
+}
+
+// Standing is one team's standing in the league.
+type Standing struct {
+	Team       string  `json:"team"`
+	Wins       float64 `json:"wins"`
+	Losses     float64 `json:"losses"`
+	Ties       float64 `json:"ties"`
+	WinPct     string  `json:"win_pct"`
+	Division   string  `json:"division"`
+	Conference string  `json:"conference"`
+}
+
+// --- API methods ---
+
+// ListTeams fetches all teams for the given sport/league.
+func (c *Client) ListTeams(ctx context.Context, sport, league string) ([]*Team, error) {
+	path, err := c.sportLeaguePath(sport, league)
+	if err != nil {
+		return nil, err
+	}
+	url := c.BaseURL + "/apis/site/v2/sports/" + path + "/teams"
 	body, err := c.Get(ctx, url)
 	if err != nil {
 		return nil, err
 	}
-	return &Page{ID: path, URL: url, Title: path, Body: pageText(body)}, nil
+	var resp teamsResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse teams: %w", err)
+	}
+	var teams []*Team
+	for _, sp := range resp.Sports {
+		for _, lg := range sp.Leagues {
+			for _, t := range lg.Teams {
+				team := &Team{
+					ID:           t.Team.ID,
+					Name:         t.Team.DisplayName,
+					Abbreviation: t.Team.Abbreviation,
+					Location:     t.Team.Location,
+					Slug:         t.Team.Slug,
+				}
+				if len(t.Team.Logos) > 0 {
+					team.LogoURL = t.Team.Logos[0].Href
+				}
+				if len(t.Team.Links) > 0 {
+					team.WebURL = t.Team.Links[0].Href
+				}
+				teams = append(teams, team)
+			}
+		}
+	}
+	return teams, nil
 }
 
-// PageLinks fetches a page and returns the same-host pages it links to, as page
-// stubs. It shows the member-listing pattern the URI driver relies on: every
-// stub carries enough (an id and a URL) to be addressed and followed on its own.
-func (c *Client) PageLinks(ctx context.Context, path string, limit int) ([]*Page, error) {
-	path = strings.Trim(path, "/")
-	body, err := c.Get(ctx, BaseURL+"/"+path)
+// ListScores fetches current/recent scoreboard for the given sport/league.
+func (c *Client) ListScores(ctx context.Context, sport, league string) ([]*Game, error) {
+	path, err := c.sportLeaguePath(sport, league)
 	if err != nil {
 		return nil, err
 	}
-	var out []*Page
-	seen := map[string]bool{}
-	for _, p := range linkPaths(body) {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, &Page{ID: p, URL: BaseURL + "/" + p})
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-	}
-	return out, nil
+	url := c.BaseURL + "/apis/site/v2/sports/" + path + "/scoreboard"
+	return c.fetchGames(ctx, url)
 }
 
-var (
-	hrefRE = regexp.MustCompile(`href="(/[^":#?]+)"`)
-	tagRE  = regexp.MustCompile(`<[^>]+>`)
-)
-
-// linkPaths pulls the relative link targets out of an HTML response, so a list
-// op can turn each into an addressable page stub.
-func linkPaths(body []byte) []string {
-	var out []string
-	for _, m := range hrefRE.FindAllSubmatch(body, -1) {
-		if p := strings.Trim(string(m[1]), "/"); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
+// ListSchedule fetches the schedule (same endpoint as scoreboard).
+func (c *Client) ListSchedule(ctx context.Context, sport, league string) ([]*Game, error) {
+	return c.ListScores(ctx, sport, league)
 }
 
-// pageText reduces an HTML response to a short plain-text preview, a stand-in
-// for the typed extract a real endpoint would hand you.
-func pageText(body []byte) string {
-	s := strings.Join(strings.Fields(tagRE.ReplaceAllString(string(body), " ")), " ")
-	if len(s) > 500 {
-		s = s[:500]
+func (c *Client) fetchGames(ctx context.Context, url string) ([]*Game, error) {
+	body, err := c.Get(ctx, url)
+	if err != nil {
+		return nil, err
 	}
-	return s
+	var resp scoreboardResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse scoreboard: %w", err)
+	}
+	var games []*Game
+	for _, e := range resp.Events {
+		g := &Game{
+			ID:        e.ID,
+			Date:      e.Date,
+			ShortName: e.ShortName,
+			Status:    e.Status.Type.Description,
+			Season:    e.Season.Year,
+		}
+		if len(e.Competitions) > 0 {
+			for _, comp := range e.Competitions[0].Competitors {
+				if comp.HomeAway == "home" {
+					g.HomeTeam = comp.Team.DisplayName
+					g.HomeScore = comp.Score
+				} else {
+					g.AwayTeam = comp.Team.DisplayName
+					g.AwayScore = comp.Score
+				}
+			}
+		}
+		games = append(games, g)
+	}
+	return games, nil
+}
+
+// ListNews fetches the latest news for the given sport/league.
+func (c *Client) ListNews(ctx context.Context, sport, league string, limit int) ([]*Article, error) {
+	path, err := c.sportLeaguePath(sport, league)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/apis/site/v2/sports/%s/news?limit=%d", c.BaseURL, path, limit)
+	body, err := c.Get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var resp newsResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse news: %w", err)
+	}
+	var articles []*Article
+	for _, a := range resp.Articles {
+		art := &Article{
+			Headline:      a.Headline,
+			Description:   a.Description,
+			Byline:        a.Byline,
+			PublishedDate: a.PublishedDate,
+			Premium:       a.Premium,
+			WebURL:        a.Links.Web.Href,
+		}
+		if len(a.Images) > 0 {
+			art.ImageURL = a.Images[0].URL
+		}
+		articles = append(articles, art)
+	}
+	return articles, nil
+}
+
+// ListStandings fetches current standings for the given sport/league.
+func (c *Client) ListStandings(ctx context.Context, sport, league string) ([]*Standing, error) {
+	path, err := c.sportLeaguePath(sport, league)
+	if err != nil {
+		return nil, err
+	}
+	url := c.BaseURL + "/apis/v2/sports/" + path + "/standings"
+	body, err := c.Get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var resp standingsResp
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("parse standings: %w", err)
+	}
+	var standings []*Standing
+	for _, child := range resp.Children {
+		conf := child.Name
+		for _, entry := range child.Entries {
+			s := &Standing{
+				Team:       entry.Team.DisplayName,
+				Conference: conf,
+			}
+			for _, stat := range entry.Stats {
+				switch stat.Name {
+				case "wins":
+					s.Wins = stat.Value
+				case "losses":
+					s.Losses = stat.Value
+				case "ties":
+					s.Ties = stat.Value
+				case "winPercent":
+					s.WinPct = stat.DisplayValue
+				case "division":
+					s.Division = stat.DisplayValue
+				}
+			}
+			standings = append(standings, s)
+		}
+	}
+	return standings, nil
 }

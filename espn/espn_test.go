@@ -18,14 +18,14 @@ func TestGet(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient()
-	c.Rate = 0 // no pacing in the test
+	c.Rate = 0
 
 	body, err := c.Get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(body) != "ok" {
-		t.Errorf("body = %q, want %q", body, "ok")
+		t.Errorf("body = %q, want ok", body)
 	}
 }
 
@@ -58,5 +58,21 @@ func TestGetRetriesOn503(t *testing.T) {
 	}
 	if time.Since(start) < 500*time.Millisecond {
 		t.Error("retries did not back off")
+	}
+}
+
+func TestNewClientDefaults(t *testing.T) {
+	c := NewClient()
+	if c.UserAgent != DefaultUserAgent {
+		t.Errorf("UserAgent = %q, want %q", c.UserAgent, DefaultUserAgent)
+	}
+	if c.Rate != 300*time.Millisecond {
+		t.Errorf("Rate = %v, want 300ms", c.Rate)
+	}
+	if c.Retries != 3 {
+		t.Errorf("Retries = %d, want 3", c.Retries)
+	}
+	if c.BaseURL != BaseURL {
+		t.Errorf("BaseURL = %q, want %q", c.BaseURL, BaseURL)
 	}
 }
