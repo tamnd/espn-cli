@@ -1,0 +1,10 @@
+title       = "espn"
+baseURL     = "https://espn-cli.tamnd.com/"
+description = "A command line for ESPN sports data."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/espn-cli"
