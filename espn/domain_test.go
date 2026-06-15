@@ -37,32 +37,34 @@ func TestListTeams(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"sports": []map[string]interface{}{{
 				"leagues": []map[string]interface{}{{
 					"teams": []map[string]interface{}{
 						{
 							"team": map[string]interface{}{
-								"id":          "1",
-								"displayName": "Arizona Cardinals",
+								"id":           "1",
+								"displayName":  "Arizona Cardinals",
 								"abbreviation": "ARI",
-								"location":    "Arizona",
-								"slug":        "arizona-cardinals",
+								"location":     "Arizona",
+								"slug":         "arizona-cardinals",
 							},
 						},
 						{
 							"team": map[string]interface{}{
-								"id":          "2",
-								"displayName": "Atlanta Falcons",
+								"id":           "2",
+								"displayName":  "Atlanta Falcons",
 								"abbreviation": "ATL",
-								"location":    "Atlanta",
-								"slug":        "atlanta-falcons",
+								"location":     "Atlanta",
+								"slug":         "atlanta-falcons",
 							},
 						},
 					},
 				}},
 			}},
-		})
+		}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 
@@ -88,13 +90,15 @@ func TestListTeamsDefaultLeague(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "football/nfl") {
 			t.Errorf("unexpected path %q, want football/nfl", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"sports": []map[string]interface{}{{
 				"leagues": []map[string]interface{}{{
 					"teams": []map[string]interface{}{},
 				}},
 			}},
-		})
+		}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 
@@ -111,7 +115,7 @@ func TestListScores(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"events": []map[string]interface{}{{
 				"id":        "401671843",
 				"date":      "2025-01-19T21:00Z",
@@ -141,7 +145,9 @@ func TestListScores(t *testing.T) {
 					},
 				}},
 			}},
-		})
+		}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 
@@ -180,7 +186,7 @@ func TestListNews(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"articles": []map[string]interface{}{{
 				"headline":      "Knicks' victory takes them off the list",
 				"description":   "A description.",
@@ -192,7 +198,9 @@ func TestListNews(t *testing.T) {
 					"web": map[string]interface{}{"href": "https://espn.com/article/1"},
 				},
 			}},
-		})
+		}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 
@@ -222,7 +230,7 @@ func TestListStandings(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"children": []map[string]interface{}{{
 				"name": "AFC",
 				"entries": []map[string]interface{}{{
@@ -235,7 +243,9 @@ func TestListStandings(t *testing.T) {
 					},
 				}},
 			}},
-		})
+		}); err != nil {
+			t.Error(err)
+		}
 	}))
 	defer ts.Close()
 

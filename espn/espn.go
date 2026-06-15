@@ -175,13 +175,13 @@ type teamsResp struct {
 		Leagues []struct {
 			Teams []struct {
 				Team struct {
-					ID              string `json:"id"`
-					UID             string `json:"uid"`
-					Slug            string `json:"slug"`
-					DisplayName     string `json:"displayName"`
-					Abbreviation    string `json:"abbreviation"`
-					Location        string `json:"location"`
-					Logos           []struct {
+					ID           string `json:"id"`
+					UID          string `json:"uid"`
+					Slug         string `json:"slug"`
+					DisplayName  string `json:"displayName"`
+					Abbreviation string `json:"abbreviation"`
+					Location     string `json:"location"`
+					Logos        []struct {
 						Href string `json:"href"`
 					} `json:"logos"`
 					Links []struct {
@@ -251,10 +251,10 @@ type standingsResp struct {
 				DisplayName string `json:"displayName"`
 			} `json:"team"`
 			Stats []struct {
-				Name        string `json:"name"`
-				DisplayName string `json:"displayName"`
-				Value       float64 `json:"value"`
-				DisplayValue string `json:"displayValue"`
+				Name         string  `json:"name"`
+				DisplayName  string  `json:"displayName"`
+				Value        float64 `json:"value"`
+				DisplayValue string  `json:"displayValue"`
 			} `json:"stats"`
 		} `json:"entries"`
 	} `json:"children"`
